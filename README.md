@@ -1,55 +1,38 @@
-# Δ Truth Engine
+# Δ Truth Engine — delta.genesisconductor.io
 
-Multi-oracle claim-verification and divergence-ledger UI for **delta.genesisconductor.io**, part of the Genesis Conductor ecosystem.
+Static mirror of the **Delta Truth Engine** site (authored in Canva, published at
+`deltatruth.my.canva.site`), deployed to Cloudflare Pages and served at
+`delta.genesisconductor.io`.
 
-A self-contained, single-file React application: submit a claim, watch the oracle network (ArXiv, X_API, Grokpedia) scan it, and get a divergence reading anchored to the on-chain ledger. Views: **Console · Verify · Tensor · Ledger · Oracles** (⌘K / Ctrl-K command palette).
+## Contents
 
-## Architecture
+- `index.html` — page markup (Canva export).
+- `_assets/` — JS bundles, CSS, fonts (woff/woff2), and images. Filenames are content-hashed and immutable.
+- `_headers` — Cloudflare Pages cache/security headers (immutable `_assets`, revalidate HTML).
 
-`index.html` is fully self-contained — no build step required:
+## ⚠️ Two Cloudflare gotchas (both already handled)
 
-- **React 18** + **ReactDOM** loaded from unpkg (UMD).
-- **`@babel/standalone`** transpiles the in-browser `<script type="text/babel">` block at load time.
-- All styling is inline (`<style>` + a few CSS classes); fonts are Inter / Inter Tight / JetBrains Mono via Google Fonts.
+1. **Rocket Loader** — every `<script>` tag carries `data-cfasync="false"` so Rocket Loader
+   leaves them alone. Without it, Rocket Loader defers/reorders the bundles and the SPA never
+   boots (blank screen). This is harmless to the SRI hashes (integrity covers file *content*,
+   not tag attributes). **Any new `<script>` must include `data-cfasync="false"`.**
+2. **Auto Minify must stay OFF** for this zone — the scripts use Subresource Integrity
+   (`integrity="sha512-…"`). If Cloudflare rewrites JS/CSS bytes, the hashes no longer match
+   and the browser blocks the scripts → blank page. Verified at deploy time that live-served
+   bytes match the SRI hashes.
 
-## ⚠️ Cloudflare Rocket Loader — critical deployment note
+## Re-deploy
 
-Every `<script>` tag carries **`data-cfasync="false"`**. This is **required**, not cosmetic.
-
-Cloudflare **Rocket Loader** rewrites and defers `<script>` tags (changing their `type` to an
-internal `<hash>-text/javascript` marker and loading them async). That breaks this app: the
-`text/babel` block depends on `@babel/standalone` having scanned the DOM synchronously at load.
-With Rocket Loader interfering, the JSX never transpiles, React never mounts into `<div id="root">`,
-and the page renders as a **blank deep-blue screen** (the app's `#0a0d12` background).
-
-`data-cfasync="false"` is Cloudflare's documented opt-out: Rocket Loader skips any script marked
-with it. With these markers in place the app renders correctly **regardless of the zone's Rocket
-Loader setting** — no dashboard change required.
-
-If you ever add a new `<script>` tag, it **must** include `data-cfasync="false"`.
-
-## Local preview
+The site is static; re-mirror from Canva and deploy:
 
 ```bash
-# any static server works; the app needs no build
-python3 -m http.server 8099
-# → open http://localhost:8099/
+npx wrangler pages deploy . --project-name=delta-truth-engine --branch=main
 ```
 
-## Deploy (Cloudflare Pages)
+`delta.genesisconductor.io` is bound as a custom domain on the `delta-truth-engine` Pages project.
 
-Static site, no build command, output directory = repo root.
+## Updating from Canva
 
-```bash
-npx wrangler pages deploy . --project-name=delta
-```
-
-Then bind the custom domain `delta.genesisconductor.io` to the Pages project.
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `index.html` | The entire application (self-contained). |
-| `_headers` | Cloudflare Pages cache/security headers. |
-| `LICENSE` | License. |
+When the Canva design changes, re-export/re-mirror `index.html` + `_assets/`, re-apply
+`data-cfasync="false"` to all `<script>` tags, then deploy. Confirm SRI still matches the
+live-served bytes after deploy.
