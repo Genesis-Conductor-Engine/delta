@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Δ Truth Engine — multi-oracle claim verification & divergence ledger. Genesis Conductor.">
+<title>Δ Truth Engine — Genesis Conductor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#0a0d12;color:#c9cfdb;font-family:'Inter',ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+:root{--accent:#ff3d9a}
+::selection{background:rgba(255,61,154,0.3)}
+@keyframes dt-pulse{0%,100%{opacity:1}50%{opacity:0.32}}
+@keyframes dt-scan{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
+.dt-scroll::-webkit-scrollbar{width:11px;height:11px}
+.dt-scroll::-webkit-scrollbar-thumb{background:#262d3c;border-radius:99px;border:3px solid #0a0d12}
+.dt-scroll::-webkit-scrollbar-track{background:transparent}
+textarea,input{outline:none;font-family:inherit}
+textarea::placeholder,input::placeholder{color:#5a647a}
+.nav-item{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;cursor:pointer;margin-bottom:2px;font-size:13px;transition:background 120ms,color 120ms;user-select:none}
+.nav-item:not(.active):hover{background:#161d28}
+.preset-chip{background:transparent;border:1px solid #1d2330;border-radius:6px;padding:5px 11px;font-size:12px;color:#8a94a9;cursor:pointer;font-family:'Inter',sans-serif;transition:border-color 120ms}
+.preset-chip:hover{border-color:#3a4356}
+.btn-primary{background:#ff3d9a;border:none;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:500;color:#fff;cursor:pointer;transition:filter 120ms;font-family:'Inter',sans-serif}
+.btn-primary:hover{filter:brightness(1.1)}
+.btn-ghost{background:transparent;border:1px solid #1d2330;border-radius:8px;padding:9px 18px;font-size:13px;color:#8a94a9;cursor:pointer;transition:border-color 120ms;font-family:'Inter',sans-serif}
+.btn-ghost:hover{border-color:#3a4356}
+.ledger-row{transition:background 120ms;cursor:default}
+.ledger-row:hover{background:#12161e}
+.oracle-card{background:#0e1319;border:1px solid #1d2330;border-radius:10px;padding:20px 24px;margin-bottom:12px}
+.cmd-item{display:flex;align-items:center;gap:12px;padding:11px 16px;cursor:pointer;transition:background 80ms}
+.cmd-item:hover{background:#1d2330}
+.metric-card{background:#0e1319;border:1px solid #1d2330;border-radius:8px;padding:14px 16px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<!-- React + in-browser Babel. data-cfasync="false" tells Cloudflare Rocket Loader to leave these scripts alone -->
+<!-- (without it, Rocket Loader defers/reorders them, the text/babel block never transpiles, and React never mounts → blank screen). -->
+<script data-cfasync="false" crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script data-cfasync="false" crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script data-cfasync="false" src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script data-cfasync="false">
+// Suppress the "in-browser Babel transformer" warning from @babel/standalone.
+// This is intentional for the self-contained demo. For final production deploys
+// we recommend precompiling JSX (see https://babeljs.io/docs/setup).
+(function() {
+  const origWarn = console.warn;
+  console.warn = function(msg) {
+    if (typeof msg === 'string' && msg.includes('in-browser Babel transformer')) {
+      return; // swallow the recommendation warning
+    }
+    origWarn.apply(console, arguments);
+  };
+})();
+</script>
+<script data-cfasync="false" type="text/babel">
+'use strict';
+// ─── Constants ───────────────────────────────────────────────
+const ACCENT = '#ff3d9a';
+const GREEN = '#27e070';
+const YELLOW = '#f5b544';
+const RED = '#ff5d5d';
+const TIER_COLOR = { aligned: GREEN, tension: YELLOW, divergent: RED };
+const TIER_BG = {
+  aligned: 'rgba(39,224,112,0.08)',
+  tension: 'rgba(245,181,68,0.08)',
+  divergent: 'rgba(255,93,93,0.08)',
+};
+const NAV_ITEMS = [
+  { id: 'console', icon: '⬡', label: 'Console' },
+  { id: 'verify', icon: '◎', label: 'Verify' },
+  { id: 'tensor', icon: '≋', label: 'Tensor' },
+  { id: 'ledger', icon: '⊟', label: 'Ledger' },
+  { id: 'oracles', icon: '◈', label: 'Oracles' },
+];
+const ORACLES = [
+  { name: 'ArXiv', sub: 'research corpus', weight: '0.42', latency: '11 ms', sync: '2s ago' },
+  { name: 'X_API', sub: 'social consensus', weight: '0.33', latency: '18 ms', sync: '1s ago' },
+  { name: 'Grokpedia', sub: 'encyclopedic', weight: '0.25', latency: '14 ms', sync: '4s ago' },
+];
+const PRESETS = [
+  'The earth is flat',
+  'Markets are perfectly efficient',
+  'AGI will surpass human reasoning by 2030',
+  'Sleep debt is fully recoverable',
+];
+// ─── Helpers ─────────────────────────────────────────────────
+function hash01(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return Math.abs(h) / 2147483648;
+}
+function hexHash(s) {
+  const h = (hash01(s) * 0xffffffff) | 0;
+  const a = (h >>> 0).toString(16).padStart(8, '0');
+  const b = ((h * 7) >>> 0).toString(16).padStart(8, '0');
+  return '0x' + a.slice(0, 4) + '…' + b.slice(0, 4);
+}
+function tierColor(t) { return TIER_COLOR[t] || '#8a94a9'; }
+function tierBg(t) { return TIER_BG[t] || 'transparent'; }
+// hex → rgba helper for canvas
+function hexRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+// ─── Main Component ──────────────────────────────────────────
+class DeltaTruthEngine extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      view: 'console',
+      claim: '',
+      claimError: '',
+      stage: 'idle', // 'idle' | 'scanning' | 'result'
+      scanFeeds: [],
+      reading: null,
+      cmdOpen: false,
+      block: 8492103,
+      anchoredTotal: 2418,
+      vectors: [
+        { statement: 'Scaling laws hold beyond 10^26 training FLOPs', domain: 'ml', div: 0.34, trend: 0.02, tier: 'tension' },
+        { statement: 'Remote work reduces sustained team output', domain: 'org', div: 0.71, trend: 0.09, tier: 'divergent' },
+        { statement: 'A Mediterranean diet extends median lifespan', domain: 'health', div: 0.12, trend: -0.01, tier: 'aligned' },
+        { statement: 'Quantum advantage is commercially imminent', domain: 'physics', div: 0.58, trend: 0.04, tier: 'tension' },
+        { statement: 'Bitcoin is a reliable long-term inflation hedge', domain: 'econ', div: 0.66, trend: 0.07, tier: 'divergent' },
+      ],
+      ledger: [
+        { statement: 'The earth is approximately spherical', div: 0.03, tier: 'aligned', block: 8491002, hash: '0x7a3f…9e2d', timeAgo: '2h ago' },
+        { statement: 'Caffeine improves short-term focus', div: 0.19, tier: 'aligned', block: 8488440, hash: '0x14c8…b071', timeAgo: '6h ago' },
+        { statement: 'Markets are perfectly efficient', div: 0.74, tier: 'divergent', block: 8475221, hash: '0x9d02…41af', timeAgo: '1d ago' },
+        { statement: 'Sleep debt is fully recoverable on weekends', div: 0.69, tier: 'divergent', block: 8470005, hash: '0xe55a…7c30', timeAgo: '2d ago' },
+      ],
+    };
+    // Wave data — NOT in state to avoid React re-render churn
+    this._subj = [];
+    this._obj = [];
+    this._t = 0;
+    this._loop = null;
+    this._blockTmr = null;
+    this._scanTs = [];
+  }
+  // ── Lifecycle ──────────────────────────────────────────────
+  componentDidMount() {
+    this._seed();
+    // setInterval — NOT requestAnimationFrame (rAF pauses in backgrounded iframes)
+    this._loop = setInterval(this._tick, 40);
+    this._blockTmr = setInterval(this._tickBlock, 4200);
+    window.addEventListener('keydown', this._onKey);
+  }
+  componentWillUnmount() {
+    clearInterval(this._loop);
+    clearInterval(this._blockTmr);
+    this._scanTs.forEach(clearTimeout);
+    window.removeEventListener('keydown', this._onKey);
+  }
+  _onKey = (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      this.setState(s => ({ cmdOpen: !s.cmdOpen }));
+    }
+    if (e.key === 'Escape') this.setState({ cmdOpen: false });
+  };
+  _tickBlock = () => {
+    this.setState(s => ({ block: s.block + Math.floor(1 + Math.random() * 3) }));
+  };
+  // ── Canvas wave math ───────────────────────────────────────
+  _seed() {
+    for (let i = 0; i < 300; i++) {
+      const subj = 0.5 + 0.38 * Math.sin(i * 0.047) + 0.18 * Math.sin(i * 0.13) + (Math.random() - 0.5) * 0.04;
+      this._subj.push(Math.max(0.02, Math.min(0.98, subj)));
+      const obj = subj + (Math.random() - 0.5) * 0.28;
+      this._obj.push(Math.max(0.02, Math.min(0.98, obj)));
+    }
+    this._t = 300;
+  }
+  _tick = () => {
+    this._t++;
+    const t = this._t;
+    const div = this.state.reading ? this.state.reading.div : 0.22;
+    const subj = 0.5 + 0.38 * Math.sin(t * 0.047) + 0.18 * Math.sin(t * 0.13) + (Math.random() - 0.5) * 0.04;
+    const obj = subj + (Math.random() - 0.5) * 0.28 + (div - 0.22) * 0.6;
+    this._subj.push(Math.max(0.02, Math.min(0.98, subj)));
+    this._obj .push(Math.max(0.02, Math.min(0.98, obj)));
+    if (this._subj.length > 600) { this._subj.shift(); this._obj.shift(); }
+    this._draw();
+  };
+  _drawOne(cv) {
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.lineWidth = 1;
+    [0.25, 0.5, 0.75].forEach(y => {
+      ctx.beginPath(); ctx.moveTo(0, H * y); ctx.lineTo(W, H * y); ctx.stroke();
+    });
+    const drawLine = (arr, hexColor, alpha) => {
+      if (arr.length < 2) return;
+      const take = Math.min(arr.length, W);
+      const slice = arr.slice(-take);
+      const grad = ctx.createLinearGradient(0, 0, W, 0);
+      const color = hexRgba(hexColor, alpha);
+      grad.addColorStop(0, 'transparent');
+      grad.addColorStop(0.25, hexRgba(hexColor, alpha * 0.3));
+      grad.addColorStop(1, color);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      slice.forEach((v, i) => {
+        const x = (i / (take - 1)) * W;
+        const y = (1 - v) * H * 0.88 + H * 0.06;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    };
+    drawLine(this._subj, '#8a94a9', 0.7);
+    drawLine(this._obj, ACCENT, 0.9);
+  }
+  _draw() {
+    // data-attribute DOM access — React refs via holes leave .current null
+    document.querySelectorAll('[data-dt-canvas]').forEach(cv => this._drawOne(cv));
+    if (this._subj.length) {
+      const tension = Math.abs(this._subj[this._subj.length - 1] - this._obj[this._obj.length - 1]);
+      const c = tension > 0.4 ? RED : tension > 0.2 ? YELLOW : GREEN;
+      document.querySelectorAll('[data-dt-tension]').forEach(el => {
+        el.textContent = tension.toFixed(3);
+        el.style.color = c;
+      });
+    }
+  }
+  // ── Business logic ─────────────────────────────────────────
+  _computeReading(claim) {
+    const presets = [
+      ['flat earth', 0.96], ['earth is flat', 0.96], ['vaccin', 0.95], ['autism', 0.95],
+      ['perfectly efficient', 0.74], ['efficient market', 0.72], ['sleep debt', 0.68],
+      ['homeopath', 0.93], ['astrolog', 0.9], ['spherical', 0.04], ['earth is round', 0.05],
+      ['climate change is real', 0.08], ['surpass human', 0.55], ['agi', 0.5],
+      ['quantum', 0.52], ['bitcoin', 0.64], ['moon landing', 0.71],
+    ];
+    const lower = claim.toLowerCase();
+    let div = 0.18 + hash01(claim) * 0.72;
+    for (const [key, val] of presets) {
+      if (lower.includes(key)) { div = val; break; }
+    }
+    const tier = div < 0.25 ? 'aligned' : div < 0.55 ? 'tension' : 'divergent';
+    const consensus = Math.round((1 - div) * 100);
+    const confidence = Math.round(74 + hash01(claim + 'conf') * 24);
+    // Stable per-oracle divergence values derived from hash
+    const oracleDivs = ORACLES.map(o =>
+      Math.max(0.01, Math.min(0.99, div + (hash01(o.name + claim) - 0.5) * 0.18))
+    );
+    return { statement: claim, div, tier, consensus, confidence, oracleDivs, anchored: false };
+  }
+  runVerify = () => {
+    const { claim } = this.state;
+    if (!claim.trim()) {
+      this.setState({ claimError: 'Enter a claim to verify.' });
+      return;
+    }
+    this.setState({ stage: 'scanning', scanFeeds: [], claimError: '' });
+    this._scanTs.forEach(clearTimeout);
+    this._scanTs = ORACLES.map((o, i) =>
+      setTimeout(() => {
+        this.setState(s => ({ scanFeeds: [...s.scanFeeds, o.name] }));
+      }, 420 + i * 540)
+    );
+    this._scanTs.push(
+      setTimeout(() => {
+        const reading = this._computeReading(claim);
+        this.setState({ stage: 'result', reading });
+      }, 1820)
+    );
+  };
+  anchorReading = () => {
+    const r = this.state.reading;
+    if (!r || r.anchored) return;
+    const block = this.state.block;
+    const hash = hexHash(r.statement + block);
+    const entry = { statement: r.statement, div: r.div, tier: r.tier, block, hash, timeAgo: 'just now' };
+    this.setState(s => ({
+      reading: { ...r, anchored: true, hash, block },
+      ledger: [entry, ...s.ledger],
+      anchoredTotal: s.anchoredTotal + 1,
+      block: s.block + 1,
+    }));
+  };
+  resetVerify = () => {
+    this.setState({ stage: 'idle', reading: null, claim: '', scanFeeds: [], claimError: '' });
+  };
+  setView = (view) => this.setState({ view, cmdOpen: false });
+  // ── Shared render helpers ──────────────────────────────────
+  _dot(color, pulse = false) {
+    return {
+      width: 8, height: 8, borderRadius: 99, background: color, flexShrink: 0,
+      ...(pulse ? { animation: 'dt-pulse 2s ease-in-out infinite' } : {}),
+    };
+  }
+  _divBar(div, color) {
+    return (
+      <div style={{ height: 4, borderRadius: 99, background: '#1a2030', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${Math.round(div * 100)}%`, background: color, borderRadius: 99, transition: 'width 0.5s ease' }} />
+      </div>
+    );
+  }
+  _pill(tier) {
+    const c = tierColor(tier);
+    return (
+      <span style={{
+        fontSize: 10, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600,
+        color: c, background: tierBg(tier), border: `1px solid ${c}40`,
+        padding: '2px 7px', borderRadius: 99, letterSpacing: '0.04em',
+        whiteSpace: 'nowrap',
+      }}>
+        {tier.toUpperCase()}
+      </span>
+    );
+  }
+  _sectionHeader(label) {
+    return (
+      <span style={{ fontSize: 11, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+        {label}
+      </span>
+    );
+  }
+  // ── Views ──────────────────────────────────────────────────
+  _renderConsole() {
+    const { block, anchoredTotal, vectors } = this.state;
+    return (
+      <div className="dt-scroll" style={{ padding: '28px 32px', height: '100%', overflowY: 'auto' }}>
+        {/* Page header */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
+          <div>
+            <div style={{ fontSize: 22, fontFamily: "'Inter Tight', sans-serif", fontWeight: 600, color: '#f4f5f8', letterSpacing: '-0.5px' }}>
+              Belief Calibration Console
+            </div>
+            <div style={{ fontSize: 13, color: '#5a647a', marginTop: 3 }}>
+              Active divergence vectors — live oracle sync
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 24, textAlign: 'right' }}>
+            <div>
+              <div style={{ fontSize: 10, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.08em' }}>Block</div>
+              <div style={{ fontSize: 15, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, color: ACCENT, marginTop: 3 }}>
+                #{block.toLocaleString()}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.08em' }}>Anchored</div>
+              <div style={{ fontSize: 15, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, color: '#f4f5f8', marginTop: 3 }}>
+                {anchoredTotal.toLocaleString()}
+              </div>
+            </div>
+          </div>
+        </div>
+        {/* Stream canvas */}
+        <div style={{ background: '#0e1319', borderRadius: 10, border: '1px solid #1d2330', overflow: 'hidden', marginBottom: 20 }}>
+          <div style={{ padding: '11px 16px', borderBottom: '1px solid #1d2330', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={this._dot('#8a94a9')} />
+                <span style={{ fontSize: 11, color: '#8a94a9', fontFamily: "'JetBrains Mono', monospace" }}>SUBJECTIVE</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={this._dot(ACCENT, true)} />
+                <span style={{ fontSize: 11, color: ACCENT, fontFamily: "'JetBrains Mono', monospace" }}>ORACLE</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace" }}>Δ TENSION</span>
+              <span data-dt-tension="console" style={{ fontSize: 14, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: GREEN }}>0.000</span>
+            </div>
+          </div>
+          <canvas data-dt-canvas="console" width={1200} height={220}
+            style={{ width: '100%', height: 220, display: 'block', background: '#0a0d12' }} />
+        </div>
+        {/* Vectors table */}
+        <div style={{ background: '#0e1319', border: '1px solid #1d2330', borderRadius: 10, overflow: 'hidden' }}>
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid #1d2330', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            {this._sectionHeader('Active Vectors')}
+            <span style={{ fontSize: 11, color: '#5a647a' }}>{vectors.length} tracked</span>
+          </div>
+          {vectors.map((v, i) => (
+            <div key={i} style={{
+              padding: '14px 16px',
+              borderBottom: i < vectors.length - 1 ? '1px solid #12161e' : 'none',
+              display: 'grid',
+              gridTemplateColumns: '1fr 80px',
+              gap: 16,
+              alignItems: 'center',
+            }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
+                  {this._pill(v.tier)}
+                  <span style={{ fontSize: 11, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace" }}>
+                    {v.domain.toUpperCase()}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, color: '#c9cfdb', lineHeight: 1.45, marginBottom: 9 }}>{v.statement}</div>
+                {this._divBar(v.div, tierColor(v.tier))}
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 20, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: tierColor(v.tier) }}>
+                  {v.div.toFixed(2)}
+                </div>
+                <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: v.trend > 0 ? RED : GREEN, marginTop: 2 }}>
+                  {v.trend > 0 ? '▲' : '▼'} {Math.abs(v.trend).toFixed(2)}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  _renderVerify() {
+    const { claim, claimError, stage, scanFeeds, reading } = this.state;
+    return (
+      <div className="dt-scroll" style={{ padding: '28px 32px', height: '100%', overflowY: 'auto' }}>
+        <div style={{ fontSize: 22, fontFamily: "'Inter Tight', sans-serif", fontWeight: 600, color: '#f4f5f8', letterSpacing: '-0.5px', marginBottom: 3 }}>
+          Divergence Verify
+        </div>
+        <div style={{ fontSize: 13, color: '#5a647a', marginBottom: 28 }}>
+          State a belief — oracle mesh returns structural divergence score
+        </div>
+        {/* ─ IDLE ─ */}
+        {stage === 'idle' && (
+          <div>
+            <div style={{
+              background: '#0e1319',
+              border: `1px solid ${claimError ? RED : '#1d2330'}`,
+              borderRadius: 10,
+              overflow: 'hidden',
+              marginBottom: 14,
+              transition: 'border-color 120ms',
+            }}>
+              <textarea
+                value={claim}
+                onChange={e => this.setState({ claim: e.target.value, claimError: '' })}
+                onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') this.runVerify(); }}
+                placeholder="State a belief or claim for calibration…"
+                rows={4}
+                style={{
+                  width: '100%', padding: '14px 16px', background: 'transparent',
+                  border: 'none', color: '#c9cfdb', fontSize: 14, lineHeight: 1.6,
+                  resize: 'none', display: 'block',
+                }}
+              />
+              {claimError && (
+                <div style={{ padding: '4px 16px 10px', fontSize: 12, color: RED }}>{claimError}</div>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 22 }}>
+              {PRESETS.map((p, i) => (
+                <button key={i} className="preset-chip"
+                  onClick={() => this.setState({ claim: p, claimError: '' })}>
+                  {p}
+                </button>
+              ))}
+            </div>
+            <button className="btn-primary" onClick={this.runVerify}>
+              Run divergence →
+            </button>
+          </div>
+        )}
+        {/* ─ SCANNING ─ (no dt-fadein — would pin to opacity:0 on re-render) */}
+        {stage === 'scanning' && (
+          <div style={{ background: '#0e1319', border: '1px solid #1d2330', borderRadius: 10, padding: 24 }}>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: '#5a647a', marginBottom: 14, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Scanning oracle mesh…
+            </div>
+            {/* Animated scan bar */}
+            <div style={{ height: 3, background: '#1a2030', borderRadius: 99, overflow: 'hidden', marginBottom: 22, position: 'relative' }}>
+              <div style={{
+                position: 'absolute', inset: 0,
+                background: `linear-gradient(90deg, transparent, ${ACCENT}, transparent)`,
+                animation: 'dt-scan 1.4s linear infinite',
+              }} />
+            </div>
+            <div style={{ fontSize: 13, color: '#8a94a9', marginBottom: 20, fontStyle: 'italic' }}>
+              "{claim}"
+            </div>
+            {ORACLES.map((o, i) => {
+              const connected = scanFeeds.includes(o.name);
+              return (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '9px 0',
+                  borderBottom: i < ORACLES.length - 1 ? '1px solid #12161e' : 'none',
+                }}>
+                  <div style={this._dot(connected ? GREEN : '#2a3244', connected)} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, color: connected ? '#c9cfdb' : '#5a647a', transition: 'color 300ms' }}>{o.name}</div>
+                    <div style={{ fontSize: 11, color: '#5a647a' }}>{o.sub}</div>
+                  </div>
+                  <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: connected ? GREEN : '#2a3244', transition: 'color 300ms' }}>
+                    {connected ? 'connected' : 'querying…'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {/* ─ RESULT ─ (no dt-fadein) */}
+        {stage === 'result' && reading && (
+          <div>
+            {/* Anchor success banner */}
+            {reading.anchored && (
+              <div style={{
+                background: 'rgba(39,224,112,0.07)', border: '1px solid rgba(39,224,112,0.22)',
+                borderRadius: 10, padding: '14px 20px', marginBottom: 20,
+                display: 'flex', alignItems: 'center', gap: 12,
+              }}>
+                <div style={this._dot(GREEN)} />
+                <div>
+                  <div style={{ fontSize: 13, color: GREEN, fontWeight: 500 }}>Anchored on-chain</div>
+                  <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: '#5a647a', marginTop: 2 }}>
+                    Block #{reading.block.toLocaleString()} · {reading.hash}
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* Verdict */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+              <span style={{
+                fontSize: 12, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600,
+                color: tierColor(reading.tier), background: tierBg(reading.tier),
+                border: `1px solid ${tierColor(reading.tier)}40`,
+                padding: '4px 12px', borderRadius: 99, textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}>
+                {reading.tier}
+              </span>
+              <span style={{ fontSize: 13, color: '#5a647a' }}>divergence score</span>
+              <span style={{ fontSize: 22, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: tierColor(reading.tier) }}>
+                {reading.div.toFixed(2)}
+              </span>
+            </div>
+            {/* Claim */}
+            <div style={{
+              fontSize: 14, color: '#c9cfdb', lineHeight: 1.6, marginBottom: 20,
+              padding: '12px 16px', background: '#0e1319', borderRadius: 8, border: '1px solid #1d2330',
+            }}>
+              "{reading.statement}"
+            </div>
+            {/* Metrics grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+              {[
+                { label: 'Δ divergence', value: reading.div.toFixed(3), color: tierColor(reading.tier) },
+                { label: 'Consensus', value: `${reading.consensus}%`, color: '#f4f5f8' },
+                { label: 'Confidence', value: `${reading.confidence}%`, color: '#f4f5f8' },
+              ].map((m, i) => (
+                <div key={i} className="metric-card">
+                  <div style={{ fontSize: 10, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+                    {m.label}
+                  </div>
+                  <div style={{ fontSize: 24, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: m.color }}>
+                    {m.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Oracle breakdown */}
+            <div style={{ background: '#0e1319', border: '1px solid #1d2330', borderRadius: 8, overflow: 'hidden', marginBottom: 24 }}>
+              <div style={{ padding: '10px 16px', borderBottom: '1px solid #12161e' }}>
+                {this._sectionHeader('Oracle breakdown')}
+              </div>
+              {ORACLES.map((o, i) => {
+                const fDiv = reading.oracleDivs[i];
+                return (
+                  <div key={i} style={{
+                    padding: '11px 16px',
+                    borderBottom: i < ORACLES.length - 1 ? '1px solid #12161e' : 'none',
+                    display: 'flex', alignItems: 'center', gap: 14,
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontSize: 13, color: '#c9cfdb' }}>{o.name}</span>
+                      <span style={{ fontSize: 11, color: '#5a647a', marginLeft: 8 }}>({o.sub})</span>
+                    </div>
+                    <div style={{ width: 90 }}>{this._divBar(fDiv, tierColor(reading.tier))}</div>
+                    <div style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: tierColor(reading.tier), minWidth: 36, textAlign: 'right' }}>
+                      {fDiv.toFixed(2)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: 10 }}>
+              {!reading.anchored && (
+                <button className="btn-primary" onClick={this.anchorReading}>
+                  ⬡ Anchor on-chain
+                </button>
+              )}
+              <button className="btn-ghost" onClick={this.resetVerify}>
+                ↺ New claim
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+  _renderTensor() {
+    return (
+      <div className="dt-scroll" style={{ padding: '28px 32px', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ fontSize: 22, fontFamily: "'Inter Tight', sans-serif", fontWeight: 600, color: '#f4f5f8', letterSpacing: '-0.5px', marginBottom: 3 }}>
+          Tensor Stream
+        </div>
+        <div style={{ fontSize: 13, color: '#5a647a', marginBottom: 20 }}>
+          Live subjective / objective divergence waveform
+        </div>
+        <div style={{ background: '#0e1319', borderRadius: 10, border: '1px solid #1d2330', overflow: 'hidden', flex: 1 }}>
+          <div style={{ padding: '11px 16px', borderBottom: '1px solid #1d2330', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={this._dot('#8a94a9')} />
+                <span style={{ fontSize: 11, color: '#8a94a9', fontFamily: "'JetBrains Mono', monospace" }}>SUBJECTIVE</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={this._dot(ACCENT, true)} />
+                <span style={{ fontSize: 11, color: ACCENT, fontFamily: "'JetBrains Mono', monospace" }}>ORACLE</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace" }}>Δ LIVE TENSION</span>
+              <span data-dt-tension="tensor" style={{ fontSize: 18, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: GREEN }}>0.000</span>
+            </div>
+          </div>
+          <canvas data-dt-canvas="tensor" width={1200} height={420}
+            style={{ width: '100%', height: 420, display: 'block', background: '#0a0d12' }} />
+        </div>
+      </div>
+    );
+  }
+  _renderLedger() {
+    const { ledger } = this.state;
+    return (
+      <div className="dt-scroll" style={{ padding: '28px 32px', height: '100%', overflowY: 'auto' }}>
+        <div style={{ fontSize: 22, fontFamily: "'Inter Tight', sans-serif", fontWeight: 600, color: '#f4f5f8', letterSpacing: '-0.5px', marginBottom: 3 }}>
+          Anchor Ledger
+        </div>
+        <div style={{ fontSize: 13, color: '#5a647a', marginBottom: 24 }}>
+          Immutable on-chain belief anchors — Ed25519 signed
+        </div>
+        <div style={{ background: '#0e1319', border: '1px solid #1d2330', borderRadius: 10, overflow: 'hidden' }}>
+          {/* Table header */}
+          <div style={{
+            padding: '10px 16px', borderBottom: '1px solid #1d2330',
+            display: 'grid', gridTemplateColumns: '1fr 90px 58px 110px 108px', gap: 12, alignItems: 'center',
+          }}>
+            {['Statement', 'Tier', 'Δ', 'Block', 'Hash'].map(h => (
+              <span key={h} style={{ fontSize: 11, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.08em' }}>{h}</span>
+            ))}
+          </div>
+          {/* Rows */}
+          {ledger.map((e, i) => (
+            <div key={i} className="ledger-row" style={{
+              padding: '13px 16px',
+              borderBottom: i < ledger.length - 1 ? '1px solid #12161e' : 'none',
+              display: 'grid', gridTemplateColumns: '1fr 90px 58px 110px 108px', gap: 12, alignItems: 'center',
+            }}>
+              <div>
+                <div style={{ fontSize: 13, color: '#c9cfdb', marginBottom: 2 }}>{e.statement}</div>
+                <div style={{ fontSize: 11, color: '#5a647a' }}>{e.timeAgo}</div>
+              </div>
+              {this._pill(e.tier)}
+              <div style={{ fontSize: 13, fontFamily: "'JetBrains Mono', monospace", color: tierColor(e.tier) }}>
+                {e.div.toFixed(2)}
+              </div>
+              <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: '#8a94a9' }}>
+                #{e.block.toLocaleString()}
+              </div>
+              <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: '#5a647a' }}>
+                {e.hash}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  _renderOracles() {
+    return (
+      <div className="dt-scroll" style={{ padding: '28px 32px', height: '100%', overflowY: 'auto' }}>
+        <div style={{ fontSize: 22, fontFamily: "'Inter Tight', sans-serif", fontWeight: 600, color: '#f4f5f8', letterSpacing: '-0.5px', marginBottom: 3 }}>
+          Oracle Network
+        </div>
+        <div style={{ fontSize: 13, color: '#5a647a', marginBottom: 24 }}>
+          Connected data sources — real-time consensus mesh
+        </div>
+        {ORACLES.map((o, i) => (
+          <div key={i} className="oracle-card">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={this._dot(GREEN, true)} />
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: '#f4f5f8', fontFamily: "'Inter Tight', sans-serif" }}>{o.name}</div>
+                  <div style={{ fontSize: 12, color: '#5a647a', marginTop: 1 }}>{o.sub}</div>
+                </div>
+              </div>
+              <div style={{
+                background: 'rgba(39,224,112,0.07)', border: '1px solid rgba(39,224,112,0.2)',
+                borderRadius: 6, padding: '3px 10px',
+                fontSize: 11, color: GREEN, fontFamily: "'JetBrains Mono', monospace",
+              }}>
+                LIVE
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+              {[
+                { label: 'Weight', value: o.weight },
+                { label: 'Latency', value: o.latency },
+                { label: 'Last sync', value: o.sync },
+              ].map((m, j) => (
+                <div key={j} style={{ background: '#0a0d12', borderRadius: 6, padding: '10px 12px' }}>
+                  <div style={{ fontSize: 10, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>
+                    {m.label}
+                  </div>
+                  <div style={{ fontSize: 15, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, color: '#c9cfdb' }}>
+                    {m.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  _renderCmdPalette() {
+    return (
+      <div
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '18vh' }}
+        onClick={() => this.setState({ cmdOpen: false })}
+      >
+        <div
+          style={{ background: '#111822', border: '1px solid #262d3c', borderRadius: 12, width: 420, overflow: 'hidden', boxShadow: '0 24px 60px rgba(0,0,0,0.65)' }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid #1d2330', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 14, color: '#5a647a' }}>⌘</span>
+            <span style={{ fontSize: 13, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace" }}>Navigate…</span>
+          </div>
+          {NAV_ITEMS.map((item, i) => (
+            <div key={item.id} className="cmd-item"
+              style={{ borderBottom: i < NAV_ITEMS.length - 1 ? '1px solid #12161e' : 'none' }}
+              onClick={() => this.setView(item.id)}
+            >
+              <span style={{ fontSize: 14, color: ACCENT, width: 20, textAlign: 'center', flexShrink: 0 }}>{item.icon}</span>
+              <span style={{ fontSize: 13, color: '#c9cfdb' }}>{item.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  // ── Main render ────────────────────────────────────────────
+  render() {
+    const { view, cmdOpen, block } = this.state;
+    const navStyle = (id) => ({
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '7px 10px', borderRadius: 6, cursor: 'pointer',
+      marginBottom: 2, fontSize: 13, userSelect: 'none',
+      transition: 'background 120ms, color 120ms',
+      fontWeight: view === id ? 500 : 400,
+      color: view === id ? '#f4f5f8' : '#8a94a9',
+      background: view === id ? '#1d2330' : 'transparent',
+      boxShadow: view === id ? `inset 2px 0 0 ${ACCENT}` : 'none',
+    });
+    const activeNav = NAV_ITEMS.find(n => n.id === view);
+    return (
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#0a0d12' }}>
+        {/* ── Sidebar ── */}
+        <aside style={{ width: 220, flexShrink: 0, borderRight: '1px solid #1d2330', display: 'flex', flexDirection: 'column', padding: '16px 12px' }}>
+          {/* Logo */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 28, padding: '4px 6px' }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: 7,
+              background: `${ACCENT}18`, border: `1px solid ${ACCENT}38`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 14, color: ACCENT, fontWeight: 700,
+            }}>Δ</div>
+            <div>
+              <div style={{ fontSize: 13, fontFamily: "'Inter Tight', sans-serif", fontWeight: 600, color: '#f4f5f8', letterSpacing: '-0.3px' }}>
+                Truth Engine
+              </div>
+              <div style={{ fontSize: 10, color: '#5a647a', marginTop: 1 }}>Genesis Conductor</div>
+            </div>
+          </div>
+          {/* Nav */}
+          <nav style={{ flex: 1 }}>
+            {NAV_ITEMS.map(item => (
+              <div key={item.id} style={navStyle(item.id)} onClick={() => this.setView(item.id)}
+                onMouseEnter={e => { if (view !== item.id) e.currentTarget.style.background = '#161d28'; }}
+                onMouseLeave={e => { if (view !== item.id) e.currentTarget.style.background = 'transparent'; }}
+              >
+                <span style={{ fontSize: 14, color: view === item.id ? ACCENT : '#5a647a', width: 18, textAlign: 'center', flexShrink: 0 }}>
+                  {item.icon}
+                </span>
+                <span>{item.label}</span>
+              </div>
+            ))}
+          </nav>
+          {/* Sidebar footer */}
+          <div style={{ borderTop: '1px solid #1d2330', paddingTop: 12 }}>
+            <div style={{ padding: '7px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={this._dot(GREEN, true)} />
+                <span style={{ fontSize: 11, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace" }}>
+                  #{block.toLocaleString()}
+                </span>
+              </div>
+              <button
+                onClick={() => this.setState(s => ({ cmdOpen: !s.cmdOpen }))}
+                style={{
+                  background: 'transparent', border: '1px solid #1d2330', borderRadius: 5,
+                  padding: '3px 7px', fontSize: 11, color: '#5a647a', cursor: 'pointer',
+                  fontFamily: "'JetBrains Mono', monospace", transition: 'border-color 120ms',
+                }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = '#3a4356'}
+                onMouseLeave={e => e.currentTarget.style.borderColor = '#1d2330'}
+              >⌘K</button>
+            </div>
+          </div>
+        </aside>
+        {/* ── Main column ── */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+          {/* Topbar */}
+          <header style={{
+            height: 50, borderBottom: '1px solid #1d2330', flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {activeNav && (
+                <>
+                  <span style={{ fontSize: 13, color: '#5a647a' }}>{activeNav.icon}</span>
+                  <span style={{ fontSize: 13, color: '#8a94a9', fontFamily: "'JetBrains Mono', monospace" }}>{activeNav.label}</span>
+                </>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={this._dot(GREEN, true)} />
+                <span style={{ fontSize: 11, color: '#5a647a', fontFamily: "'JetBrains Mono', monospace" }}>3 oracles connected</span>
+              </div>
+              <span style={{ fontSize: 11, color: '#2a3244', fontFamily: "'JetBrains Mono', monospace" }}>v0.9.1</span>
+            </div>
+          </header>
+          {/* View content */}
+          <main style={{ flex: 1, overflow: 'hidden' }}>
+            {view === 'console' && this._renderConsole()}
+            {view === 'verify' && this._renderVerify()}
+            {view === 'tensor' && this._renderTensor()}
+            {view === 'ledger' && this._renderLedger()}
+            {view === 'oracles' && this._renderOracles()}
+          </main>
+        </div>
+        {/* Command palette overlay */}
+        {cmdOpen && this._renderCmdPalette()}
+      </div>
+    );
+  }
+}
+// Mount
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<DeltaTruthEngine />);
+</script>
+</body>
+</html>
