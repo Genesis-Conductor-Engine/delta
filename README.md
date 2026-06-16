@@ -1,38 +1,37 @@
 # Δ Truth Engine — delta.genesisconductor.io
 
-Static mirror of the **Delta Truth Engine** site (authored in Canva, published at
-`deltatruth.my.canva.site`), deployed to Cloudflare Pages and served at
-`delta.genesisconductor.io`.
+Serves the team's **Delta Truth Engine** design (authored in Canva, published at
+`deltatruth.my.canva.site`) at `delta.genesisconductor.io`, via a Cloudflare Pages
+reverse-proxy worker.
 
-## Contents
+## Why a proxy instead of a static mirror
 
-- `index.html` — page markup (Canva export).
-- `_assets/` — JS bundles, CSS, fonts (woff/woff2), and images. Filenames are content-hashed and immutable.
-- `_headers` — Cloudflare Pages cache/security headers (immutable `_assets`, revalidate HTML).
+Canva-published sites **cannot be statically rehosted**. Each page response embeds
+`window['__canva_website_bootstrap__']` — an encrypted (JWE) token Canva regenerates per
+request and the app hands back to Canva's backend to render. A frozen static copy serves a
+stale token, the app fails to initialize, and you get a **white page**.
 
-## ⚠️ Two Cloudflare gotchas (both already handled)
+`_worker.js` reverse-proxies every request to the live Canva origin, so the token is always
+fresh and the page renders exactly as on `deltatruth.my.canva.site` — under our own domain.
 
-1. **Rocket Loader** — every `<script>` tag carries `data-cfasync="false"` so Rocket Loader
-   leaves them alone. Without it, Rocket Loader defers/reorders the bundles and the SPA never
-   boots (blank screen). This is harmless to the SRI hashes (integrity covers file *content*,
-   not tag attributes). **Any new `<script>` must include `data-cfasync="false"`.**
-2. **Auto Minify must stay OFF** for this zone — the scripts use Subresource Integrity
-   (`integrity="sha512-…"`). If Cloudflare rewrites JS/CSS bytes, the hashes no longer match
-   and the browser blocks the scripts → blank page. Verified at deploy time that live-served
-   bytes match the SRI hashes.
+## Cloudflare Rocket Loader
 
-## Re-deploy
+Rocket Loader is enabled zone-wide on `genesisconductor.io`. It rewrites/defers `<script>`
+tags, which breaks the Canva SPA (scripts never run -> blank/white page). The worker uses
+`HTMLRewriter` to add `data-cfasync="false"` to every `<script>` on the fly (Cloudflare's
+documented opt-out), so Rocket Loader leaves them alone. This does not affect the scripts'
+Subresource Integrity (SRI covers file content, not tag attributes) or nonces.
 
-The site is static; re-mirror from Canva and deploy:
+## Deploy
 
 ```bash
 npx wrangler pages deploy . --project-name=delta-truth-engine --branch=main
 ```
 
-`delta.genesisconductor.io` is bound as a custom domain on the `delta-truth-engine` Pages project.
+`delta.genesisconductor.io` is bound as a custom domain on the `delta-truth-engine`
+Cloudflare Pages project. When a `_worker.js` is present, Pages serves it for all routes.
 
-## Updating from Canva
+## Updating the design
 
-When the Canva design changes, re-export/re-mirror `index.html` + `_assets/`, re-apply
-`data-cfasync="false"` to all `<script>` tags, then deploy. Confirm SRI still matches the
-live-served bytes after deploy.
+Edit the design in Canva and re-publish — no redeploy needed here, the worker always proxies
+the latest live version.
