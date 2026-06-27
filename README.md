@@ -1,37 +1,84 @@
 # Δ Truth Engine — delta.genesisconductor.io
 
-Serves the team's **Delta Truth Engine** design (authored in Canva, published at
-`deltatruth.my.canva.site`) at `delta.genesisconductor.io`, via a Cloudflare Pages
-reverse-proxy worker.
+Live RTPTPA (Relative-Tensor Power-Tower Arbitration) verification API **plus** the
+Canva-authored Δ Truth Engine front-end, served from a single Cloudflare Pages
+deployment on `delta.genesisconductor.io`.
 
-## Why a proxy instead of a static mirror
+> Core principle: **"Truth is Structural"** — relative tensors `R = (B − O)/(O + ε)`, never absolute positions.
 
-Canva-published sites **cannot be statically rehosted**. Each page response embeds
-`window['__canva_website_bootstrap__']` — an encrypted (JWE) token Canva regenerates per
-request and the app hands back to Canva's backend to render. A frozen static copy serves a
-stale token, the app fails to initialize, and you get a **white page**.
+## What runs where
 
-`_worker.js` reverse-proxies every request to the live Canva origin, so the token is always
-fresh and the page renders exactly as on `deltatruth.my.canva.site` — under our own domain.
-
-## Cloudflare Rocket Loader
-
-Rocket Loader is enabled zone-wide on `genesisconductor.io`. It rewrites/defers `<script>`
-tags, which breaks the Canva SPA (scripts never run -> blank/white page). The worker uses
-`HTMLRewriter` to add `data-cfasync="false"` to every `<script>` on the fly (Cloudflare's
-documented opt-out), so Rocket Loader leaves them alone. This does not affect the scripts'
-Subresource Integrity (SRI covers file content, not tag attributes) or nonces.
-
-## Deploy
-
-```bash
-npx wrangler pages deploy . --project-name=delta-truth-engine --branch=main
+```
+delta.genesisconductor.io  (Cloudflare Pages: delta-truth-engine, advanced _worker.js)
+├── /api/*   → RTPTPA engine  ── D1 (delta-truth-ledger)  persistent anchor ledger
+│                              └─ KV (DELTA_CACHE)         deterministic verify cache
+└── /*       → hardened reverse-proxy → https://deltatruth.my.canva.site  (the design)
 ```
 
-`delta.genesisconductor.io` is bound as a custom domain on the `delta-truth-engine`
-Cloudflare Pages project. When a `_worker.js` is present, Pages serves it for all routes.
+### Why a proxy for the UI
+Canva-published sites embed a **per-request encrypted bootstrap token** and render via
+Canva's backend, so a static mirror white-screens once the token goes stale. We proxy
+live so the token stays fresh, and inject `data-cfasync="false"` on every `<script>` via
+`HTMLRewriter` so zone-wide **Rocket Loader** can't re-order/mangle the SPA's scripts.
+Immutable assets (`/_assets/*`, `*.js|css|woff2|png…`) are edge-cached for 24h.
 
-## Updating the design
+## API
 
-Edit the design in Canva and re-publish — no redeploy needed here, the worker always proxies
-the latest live version.
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/health` | Liveness + D1/KV binding status |
+| GET | `/api/status` | Chain head, anchored total, crystal/spectral scores, tier colors |
+| GET\|POST | `/api/verify` | Verify a claim. `?claim=…` or `POST {"claim":"…"}`. Deterministic; KV-cached 5 min. |
+| POST | `/api/anchor` | **Server re-verifies** then commits to the D1 ledger (monotonic block + SHA hash). |
+| GET | `/api/ledger?limit=N` | Most-recent anchors (default 20, max 100). |
+
+`verify` returns: `div`, `tier` (aligned\|tension\|divergent), `tension`, `consensus`,
+`confidence`, per-oracle `oracle_divs`, `belief_preview`, `evt_id`.
+
+Anchors are forgery-resistant: `/api/anchor` ignores any client-supplied scores and
+re-runs the engine on the claim before writing.
+
+## RTPTPA engine
+
+`src/engine.js` is a faithful, **bit-for-bit** port of the reference Python engine
+(`engine/delta_truth_engine.py`): same `hash01`, belief/oracle tensors, relative tensor,
+power-tower weighting, antagonistic fusion, tier thresholds. Parity is frozen as golden
+values in `test/engine.test.js`.
+
+```bash
+npm test            # node --test: unit + Python-parity golden values
+python3 engine/delta_truth_engine.py   # reference CLI
+```
+
+## Develop & deploy
+
+```bash
+npm install
+npm run build                 # assemble public/_worker.js/ from src/
+npm test                      # parity + unit tests
+npm run migrate:remote        # apply D1 migrations
+npm run deploy                # build + wrangler pages deploy
+# production branch:
+npx wrangler pages deploy --branch main
+```
+
+### Bindings (`wrangler.jsonc`)
+- **D1** `DB` → `delta-truth-ledger`
+- **KV** `DELTA_CACHE`
+- Observability enabled (use `npx wrangler pages deployment tail` to watch live traffic).
+
+## Layout
+
+```
+src/engine.js        canonical RTPTPA math (tested)
+src/worker.js        fetch handler: /api/* + reverse-proxy
+build.mjs            assembles public/_worker.js/{index.js,engine.js}
+migrations/          D1 schema (anchors, chain_state)
+test/                node --test parity + unit tests
+engine/…py           reference Python engine
+```
+
+## Roadmap
+- Calibrate tier thresholds (current corpus skews ALIGNED).
+- Wire the front-end's verify/anchor buttons to `/api/*` (replace Canva's client-side sim).
+- Optional: real oracle ingestion (ArXiv / X / Grokpedia) behind the oracle tensors.
