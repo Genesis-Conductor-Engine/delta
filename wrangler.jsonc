@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "delta-truth-engine",
+  "compatibility_date": "2026-06-01",
+  "pages_build_output_dir": "public",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "delta-truth-ledger",
+      "database_id": "2a6f083d-a1b9-44b4-bc43-363408377155"
+    }
+  ],
+  "kv_namespaces": [
+    { "binding": "DELTA_CACHE", "id": "2f3241a62f7c4c7ea0ed2d3af838eee8" }
+  ]
+}
