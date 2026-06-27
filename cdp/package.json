@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Coinbase CDP non-custodial wallet relayer — anchors Δ Truth verifications on Base.",
+  "description": "Coinbase CDP non-custodial wallet relayer \u2014 anchors \u0394 Truth verifications on Base.",
   "scripts": {
     "quickstart": "tsx main.ts",
-    "anchor": "tsx anchor.ts"
+    "anchor": "tsx anchor.ts",
+    "setup": "npm install && echo 'Fill cdp/.env then: npm run quickstart'"
   },
   "dependencies": {
     "@coinbase/cdp-sdk": "^1.51.2",
