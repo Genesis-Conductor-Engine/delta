@@ -4,6 +4,7 @@
 //   else    → hardened reverse-proxy to the Canva-authored design
 // ─────────────────────────────────────────────────────────────────────────────
 import { verify as engineVerify, hexHash, DEFAULTS, TIER_COLOR } from "./engine.js";
+import { WIDGET_HTML } from "./widget.js";
 
 const ORIGIN = "https://deltatruth.my.canva.site";
 const VERIFY_CACHE_TTL = 300; // seconds; verify() is deterministic so cache is safe
@@ -29,6 +30,9 @@ const json = (obj, status = 200, extra = {}) =>
 class CfAsyncOff {
   element(el) { el.setAttribute("data-cfasync", "false"); }
 }
+class BodyInject {
+  element(el) { el.append(WIDGET_HTML, { html: true }); }
+}
 
 export default {
   async fetch(request, env, ctx) {
@@ -44,6 +48,7 @@ export default {
       if (url.pathname === "/api/verify") return handleVerify(request, env, ctx);
       if (url.pathname === "/api/anchor") return handleAnchor(request, env);
       if (url.pathname === "/api/ledger") return handleLedger(request, env);
+      if (url.pathname === "/api/anchor/onchain") return handleAnchorOnchain(request, env);
       if (url.pathname.startsWith("/api/")) return json({ error: "not_found", path: url.pathname }, 404);
     } catch (err) {
       return json({ error: "engine_error", message: String(err?.message || err) }, 500);
@@ -137,15 +142,46 @@ async function handleLedger(request, env) {
   const url = new URL(request.url);
   const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") || "20", 10)));
   const { results } = await env.DB.prepare(
-    `SELECT block,statement,divergence,tier,tension,consensus,confidence,oracle_divs,hash,evt_id,created_at
+    `SELECT block,statement,divergence,tier,tension,consensus,confidence,oracle_divs,hash,evt_id,
+            onchain_tx,onchain_addr,onchain_network,created_at
      FROM anchors ORDER BY block DESC LIMIT ?`
   ).bind(limit).all();
-  const rows = (results || []).map((x) => ({ ...x, oracle_divs: safeParse(x.oracle_divs) }));
+  const rows = (results || []).map((x) => ({
+    ...x,
+    oracle_divs: safeParse(x.oracle_divs),
+    onchain_url: x.onchain_tx ? scanUrl(x.onchain_network, x.onchain_tx) : null,
+  }));
   const head = await chainHead(env);
   return json({ count: rows.length, current_block: head.current_block, anchored_total: head.anchored_total, anchors: rows });
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+async function handleAnchorOnchain(request, env) {
+  if (request.method !== "POST") return json({ error: "method_not_allowed", use: "POST" }, 405);
+  if (!env.DB) return json({ error: "ledger_unavailable" }, 503);
+  // Relay-key auth: only the trusted CDP relayer may attach on-chain proofs.
+  const key = request.headers.get("x-relay-key") || "";
+  if (!env.ANCHOR_RELAY_KEY || key !== env.ANCHOR_RELAY_KEY) return json({ error: "unauthorized" }, 401);
+
+  const body = await request.json().catch(() => ({}));
+  const block = parseInt(body.block, 10);
+  const tx = (body.onchain_tx || "").toString();
+  const addr = (body.onchain_addr || "").toString();
+  const network = (body.onchain_network || "base-sepolia").toString();
+  if (!block || !/^0x[0-9a-fA-F]{64}$/.test(tx)) return json({ error: "bad_request", hint: "need {block, onchain_tx(0x…64), onchain_addr}" }, 400);
+
+  const res = await env.DB.prepare(
+    `UPDATE anchors SET onchain_tx=?, onchain_addr=?, onchain_network=? WHERE block=?`
+  ).bind(tx, addr, network, block).run();
+  if (!res.meta.changes) return json({ error: "block_not_found", block }, 404);
+  return json({ ok: true, block, onchain_tx: tx, onchain_url: scanUrl(network, tx) });
+}
+
+function scanUrl(network, tx) {
+  const base = network === "base" ? "https://basescan.org/tx/" : "https://sepolia.basescan.org/tx/";
+  return base + tx;
+}
 
 async function chainHead(env) {
   const fallback = { genesis_block: 8492103, current_block: 8492103, anchored_total: 2418 };
@@ -192,7 +228,10 @@ async function proxyToCanva(request, url, ctx) {
 
   if (ct.includes("text/html")) {
     const resp = new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: respHeaders });
-    return new HTMLRewriter().on("script", new CfAsyncOff()).transform(resp);
+    return new HTMLRewriter()
+      .on("script", new CfAsyncOff())
+      .on("body", new BodyInject())
+      .transform(resp);
   }
 
   if (isAsset && request.method === "GET" && upstream.status === 200) {

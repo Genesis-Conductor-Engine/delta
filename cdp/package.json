@@ -1,0 +1,17 @@
+{
+  "name": "delta-cdp-relayer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Coinbase CDP non-custodial wallet relayer — anchors Δ Truth verifications on Base.",
+  "scripts": {
+    "quickstart": "tsx main.ts",
+    "anchor": "tsx anchor.ts"
+  },
+  "dependencies": {
+    "@coinbase/cdp-sdk": "^1.51.2",
+    "dotenv": "^17.4.2",
+    "tsx": "^4.22.4",
+    "viem": "^2.53.1"
+  }
+}
